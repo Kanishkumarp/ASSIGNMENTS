@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>QA Bot</title>
+    <style>
+      :root { color-scheme: light; font-family: Arial, sans-serif; }
+      body { margin: 0; background: linear-gradient(135deg, #0f172a, #1e293b); color: #e5eefb; }
+      .page { max-width: 980px; margin: 0 auto; padding: 32px 18px 48px; }
+      .card { background: rgba(15, 23, 42, 0.88); border: 1px solid rgba(148, 163, 184, 0.25); border-radius: 18px; padding: 20px; box-shadow: 0 16px 32px rgba(15, 23, 42, 0.35); }
+      h1 { margin-top: 0; font-size: 2rem; }
+      label { display: block; margin-bottom: 6px; font-weight: 600; }
+      input, textarea, select, button { width: 100%; box-sizing: border-box; border-radius: 10px; border: 1px solid #334155; padding: 10px 12px; font-size: 1rem; }
+      textarea { min-height: 90px; resize: vertical; }
+      .button-row { display: flex; gap: 10px; }
+      button { background: linear-gradient(135deg, #2563eb, #7c3aed); color: white; border: none; cursor: pointer; font-weight: 700; }
+      button:hover { filter: brightness(1.04); }
+      button:disabled { opacity: 0.6; cursor: not-allowed; }
+      .ghost { background: linear-gradient(135deg, #475569, #64748b); }
+      .grid { display: grid; gap: 16px; }
+      .muted { color: #cbd5e1; font-size: 0.95rem; }
+      .meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+      .chip { background: rgba(30, 41, 59, 0.95); border: 1px solid rgba(148, 163, 184, 0.18); border-radius: 999px; padding: 6px 10px; font-size: 0.95rem; }
+      #result { margin-top: 16px; padding: 14px; border-radius: 12px; background: rgba(30, 41, 59, 0.92); border: 1px solid rgba(148, 163, 184, 0.18); white-space: pre-wrap; min-height: 120px; }
+      #fileList { margin-top: 8px; color: #e2e8f0; font-size: 0.95rem; }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <section class="card">
+        <h1>QA Bot</h1>
+        <p class="muted">Upload supported documents, ask a question, and get a structured answer. You can also copy or download the generated result.</p>
+        <div class="grid">
+          <div>
+            <label for="files">Documents</label>
+            <input id="files" type="file" multiple accept=".pdf,.docx,.txt,.csv" />
+            <div id="fileList" class="muted"></div>
+          </div>
+          <div>
+            <label for="question">Question</label>
+            <textarea id="question" placeholder="Ask a question about your document..."></textarea>
+          </div>
+          <div>
+            <label for="promptType">Prompt type</label>
+            <select id="promptType">
+              <option value="default">Default</option>
+              <option value="detailed">Detailed</option>
+              <option value="concise">Concise</option>
+              <option value="technical">Technical</option>
+            </select>
+          </div>
+          <div>
+            <label for="downloadFormat">Download format</label>
+            <select id="downloadFormat">
+              <option value="text">Text</option>
+              <option value="json">JSON</option>
+              <option value="excel">Excel</option>
+              <option value="python">Python</option>
+            </select>
+          </div>
+          <div class="button-row">
+            <button id="submit">Submit</button>
+            <button id="copyBtn" class="ghost" type="button">Copy Answer</button>
+            <button id="downloadBtn" class="ghost" type="button">Download Answer</button>
+          </div>
+        </div>
+        <div class="meta" id="meta"></div>
+        <pre id="result">Response will appear here.</pre>
+      </section>
+    </main>
+
+    <script>
+      const form = document.getElementById('files');
+      const question = document.getElementById('question');
+      const promptType = document.getElementById('promptType');
+      const downloadFormat = document.getElementById('downloadFormat');
+      const result = document.getElementById('result');
+      const submit = document.getElementById('submit');
+      const copyBtn = document.getElementById('copyBtn');
+      const downloadBtn = document.getElementById('downloadBtn');
+      const fileList = document.getElementById('fileList');
+      const meta = document.getElementById('meta');
+
+      let lastAnswer = '';
+      let lastPayload = null;
+
+      form.addEventListener('change', () => {
+        fileList.textContent = form.files && form.files.length ? Array.from(form.files).map((file) => file.name).join(', ') : 'No files selected yet.';
+      });
+
+      function updateMeta(data) {
+        meta.innerHTML = '';
+        if (!data) return;
+        const chips = [
+          `Status: ${data.status || 'n/a'}`,
+          `Time: ${data.responseTimeMs ? data.responseTimeMs + ' ms' : 'n/a'}`,
+        ];
+        chips.forEach((text) => {
+          const span = document.createElement('span');
+          span.className = 'chip';
+          span.textContent = text;
+          meta.appendChild(span);
+        });
+      }
+
+      submit.addEventListener('click', async () => {
+        const files = form.files;
+        if (!files || files.length === 0) {
+          result.textContent = 'Please select at least one supported document.';
+          return;
+        }
+
+        const body = new FormData();
+        for (const file of files) body.append('files', file);
+        body.append('question', question.value.trim());
+        body.append('promptType', promptType.value);
+
+        submit.disabled = true;
+        result.textContent = 'Processing your document...';
+        try {
+          const response = await fetch('/search/upload', { method: 'POST', body });
+          const data = await response.json();
+          lastPayload = data;
+          lastAnswer = data.output || 'No answer returned.';
+          const view = formatOutput(data, downloadFormat.value);
+          result.textContent = view;
+          updateMeta(data);
+        } catch (error) {
+          result.textContent = 'Request failed: ' + String(error);
+          updateMeta(null);
+        } finally {
+          submit.disabled = false;
+        }
+      });
+
+      function formatOutput(data, format) {
+        const text = data.output || '';
+        const metaBlock = `Status: ${data.status || 200}\nResponse Time: ${data.responseTimeMs ? data.responseTimeMs + ' ms' : 'n/a'}`;
+
+        if (format === 'json') {
+          return JSON.stringify({ status: data.status || 200, output: text, responseTimeMs: data.responseTimeMs || 0 }, null, 2);
+        }
+
+        if (format === 'excel') {
+          return `Status,Response Time,Output\n${data.status || 200},${data.responseTimeMs || 0},"${text.replace(/"/g, '""')}"`;
+        }
+
+        if (format === 'python') {
+          return `answer = """${text.replace(/"""/g, '\\\"\\\"\\\"')}"""\nprint(answer)`;
+        }
+
+        return `${metaBlock}\n\n${text}`;
+      }
+
+      copyBtn.addEventListener('click', async () => {
+        if (!lastAnswer) return;
+        await navigator.clipboard.writeText(formatOutput(lastPayload, downloadFormat.value));
+        result.textContent = 'Answer copied to clipboard in the selected format.';
+      });
+
+      downloadBtn.addEventListener('click', () => {
+        if (!lastAnswer) return;
+        const format = downloadFormat.value || 'text';
+        const content = formatOutput(lastPayload, format);
+        const extension = format === 'json' ? 'json' : format === 'excel' ? 'csv' : format === 'python' ? 'py' : 'txt';
+        const blob = new Blob([content], { type: format === 'json' ? 'application/json' : 'text/plain;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `qa-bot-answer.${extension}`;
+        link.click();
+        URL.revokeObjectURL(url);
+      });
+    </script>
+  </body>
+</html>
